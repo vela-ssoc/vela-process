@@ -2,12 +2,12 @@ package process
 
 import (
 	cond "github.com/vela-ssoc/vela-cond"
+	"github.com/vela-ssoc/vela-kit/auxlib"
 	"github.com/vela-ssoc/vela-kit/lua"
 	"github.com/vela-ssoc/vela-kit/pipe"
 	"go.uber.org/ratelimit"
 	"gopkg.in/tomb.v2"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -59,7 +59,7 @@ func (snt *snapshot) pollL(L *lua.LState) int {
 	}
 
 	snt.tomb = new(tomb.Tomb)
-	xEnv.Spawn(10, func() {
+	xEnv.Spawn(0, func() {
 		snt.poll(interval)
 	})
 	snt.V(lua.VTRun, time.Now())
@@ -100,15 +100,17 @@ done:
 	if snt.ignore == nil {
 		snt.ignore = cond.NewIgnore()
 	}
-	cnd := cond.New("exe = " + exe)
-	snt.ignore.Add(cnd)
+	snt.ignore.Add(cond.New("exe =" + exe))
+	snt.ignore.Add(cond.New("p_exe =" + exe))
+	snt.ignore.Add(cond.New("name = ssc-worker.exe,ssc-mgt.exe"))
 	return 0
 }
 
 func (snt *snapshot) pullL(L *lua.LState) int {
 	path := L.CheckString(1)
 	r := reply{}
-	err := xEnv.GET(path, "").JSON(&r)
+	err := xEnv.JSON(path, nil, &r)
+	//err := xEnv.GET(path, "").JSON(&r)
 	if err != nil {
 		L.RaiseError("%s process snap pull process fail %v", snt.Name(), err)
 	}
@@ -124,7 +126,7 @@ func (snt *snapshot) pullL(L *lua.LState) int {
 
 	tuple := make(map[string]interface{}, size)
 	for i := 0; i < size; i++ {
-		tuple[strconv.Itoa(r.Data[i].Pid)] = &r.Data[i]
+		tuple[auxlib.ToString(r.Data[i].Pid)] = &r.Data[i]
 	}
 	bkt.BatchStore(tuple, 0)
 	return 0

@@ -1,7 +1,7 @@
 package process
 
 import (
-	"github.com/elastic/gosigar"
+	"github.com/shirou/gopsutil/process"
 	cond "github.com/vela-ssoc/vela-cond"
 	"github.com/vela-ssoc/vela-kit/auxlib"
 	"github.com/vela-ssoc/vela-kit/lua"
@@ -17,31 +17,32 @@ type summary struct {
 	Unknown  uint32 `json:"unknown"`
 	Zombie   uint32 `json:"zombie"`
 
-	Process []*Process       `json:"process"`
-	Sigar   gosigar.ProcList `json:"-"`
-	Error   error
-	vsh     *vswitch.Switch
-	co      *lua.LState
+	Process []*Process      `json:"process"`
+	Pids    []int32         `json:"pids"`
+	Error   error           `json:"-"`
+	vsh     *vswitch.Switch `json:"-"`
+	co      *lua.LState     `json:"-"`
 }
 
-func (sum *summary) List() []int {
-	return sum.Sigar.List
+func (sum *summary) List() []int32 {
+	return sum.Pids
 }
 
-func (sum *summary) Map() map[int]*Process {
+func (sum *summary) Map() map[int32]*Process {
 	if n := len(sum.Process); n != 0 {
-		tab := make(map[int]*Process, n)
+		tab := make(map[int32]*Process, n)
 		for i := 0; i < n; i++ {
-			tab[i] = sum.Process[i]
+			p := sum.Process[i]
+			tab[p.Pid] = sum.Process[i]
 		}
 		return tab
 	}
 
-	n := len(sum.Sigar.List)
+	n := len(sum.Pids)
 	p := &Process{Pid: -1}
-	tab := make(map[int]*Process, n)
+	tab := make(map[int32]*Process, n)
 	for i := 0; i < n; i++ {
-		pid := sum.Sigar.List[i]
+		pid := sum.Pids[i]
 		tab[pid] = p
 	}
 	return tab
@@ -67,13 +68,12 @@ func (sum *summary) append(pv *Process) {
 }
 
 func (sum *summary) init() {
-	sigar := gosigar.ProcList{}
-	sum.Error = sigar.Get()
-	sum.Sigar = sigar
-}
-
-func (sum *summary) ToLValue() lua.LValue {
-	return lua.NewAnyData(sum)
+	pids, err := process.Pids()
+	if err != nil {
+		sum.Error = err
+		return
+	}
+	sum.Pids = pids
 }
 
 func (sum *summary) ok() bool {
@@ -197,10 +197,34 @@ func (sum *summary) search(cnd *cond.Cond) {
 			continue
 		}
 
-		if !cnd.Match(pv) {
+		if cnd != nil && !cnd.Match(pv) {
 			continue
 		}
 		sum.append(pv)
+	}
+}
+
+func (sum *summary) checksum() {
+	n := len(sum.Process)
+	if n == 0 {
+		return
+	}
+
+	distinct := make(map[string]string, n)
+
+	for i := 0; i < n; i++ {
+		p := sum.Process[i]
+		if len(p.Executable) == 0 {
+			continue
+		}
+
+		if hash, ok := distinct[p.Executable]; ok {
+			p.Checksum = hash
+			continue
+		}
+
+		p.Sha1()
+		distinct[p.Executable] = p.Checksum
 	}
 }
 
@@ -213,6 +237,24 @@ func (sum *summary) GetByIndex(idx int) *Process {
 	return sum.Process[idx]
 }
 
+func (sum *summary) collect() {
+	list := sum.List()
+	n := len(list)
+	if n == 0 {
+		return
+	}
+
+	for i := 0; i < n; i++ {
+		pid := list[i]
+		pv, err := Fast(pid)
+		if err != nil {
+			continue
+		}
+		sum.append(pv)
+	}
+
+}
+
 func By(cnd *cond.Cond) *summary {
 	sum := &summary{}
 	sum.init()
@@ -222,6 +264,18 @@ func By(cnd *cond.Cond) *summary {
 	}
 
 	sum.search(cnd)
+	return sum
+}
+
+func collect() *summary {
+	sum := &summary{}
+	sum.init()
+	if !sum.ok() {
+		xEnv.Infof("not found process summary %v", sum.Error)
+		return sum
+	}
+
+	sum.collect()
 	return sum
 }
 

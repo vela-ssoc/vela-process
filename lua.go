@@ -1,10 +1,10 @@
 package process
 
 import (
-	"github.com/vela-ssoc/vela-kit/vela"
 	cond "github.com/vela-ssoc/vela-cond"
 	"github.com/vela-ssoc/vela-kit/grep"
 	"github.com/vela-ssoc/vela-kit/lua"
+	"github.com/vela-ssoc/vela-kit/vela"
 )
 
 var xEnv vela.Environment
@@ -15,11 +15,10 @@ func pidL(L *lua.LState) int {
 		return 0
 	}
 
-	proc, err := Pid(pid)
+	proc, err := Pid(int32(pid))
 	if err != nil {
 		return 0
 	}
-
 	L.Push(proc)
 	return 1
 }
@@ -120,8 +119,26 @@ func snapshotL(L *lua.LState) int {
 	snap.poll(5)
 */
 
+func filterL(L *lua.LState) int {
+	sum := NewSumL(L)
+	if sum.init(); !sum.ok() {
+		L.RaiseError("ps start fail %v", sum.Error)
+		return 0
+	}
+
+	cnd := cond.CheckMany(L, cond.Seek(0))
+	if sum.search(cnd); !sum.ok() {
+		L.RaiseError("ps search fail %v", sum.Error)
+		return 0
+	}
+	L.Push(sum)
+	return 1
+}
+
 func WithEnv(env vela.Environment) {
 	xEnv = env
+	define(env.R())
+
 	tab := lua.NewUserKV()
 	tab.Set("pid", lua.NewFunction(pidL))
 	tab.Set("exe", lua.NewFunction(exeL))
@@ -130,6 +147,7 @@ func WithEnv(env vela.Environment) {
 	tab.Set("cwd", lua.NewFunction(cwdL))
 	tab.Set("name", lua.NewFunction(nameL))
 	tab.Set("ppid", lua.NewFunction(ppidL))
+	tab.Set("filter", lua.NewFunction(filterL))
 	tab.Set("snapshot", lua.NewFunction(snapshotL))
 
 	env.Set("ps",

@@ -1,23 +1,25 @@
 package process
 
 import (
-	"fmt"
 	"github.com/shirou/gopsutil/process"
-	"github.com/vela-ssoc/vela-kit/execpt"
 )
 
-func (proc *Process) LookupExec() error {
-	p, err := process.NewProcess(int32(proc.Pid))
-	if err != nil {
-		return err
+func (proc *Process) LookupExec(p *process.Process) error {
+	if exe, err := p.Exe(); err == nil {
+		proc.Executable = exe
 	}
 
-	c := execpt.New()
-	s := fmt.Sprintf
+	if args, e := p.CmdlineSlice(); e != nil {
+		//xEnv.Errorf("found pid:%d name:%s args fail %v", proc.Pid, proc.Name, e)
+	} else {
+		proc.Args = args
+	}
 
-	exe, err := p.Exe()
-	c.Try(s("%d exe", proc.Pid), err)
-	proc.Executable = exe
+	if cmd, e := p.Cmdline(); e != nil {
+		//xEnv.Errorf("found pid:%d name:%s args fail %v", proc.Pid, proc.Name, e)
+	} else {
+		proc.Cmdline = cmd
+	}
 
-	return c.Wrap()
+	return nil
 }

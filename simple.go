@@ -10,6 +10,9 @@ type null struct{}
 
 var NULL = null{}
 
+type simple Process
+
+/*
 type simple struct {
 	Name       string   `json:"name"`
 	State      string   `json:"state"`
@@ -35,24 +38,10 @@ func (s *simple) with(p *Process) {
 	s.Executable = p.Executable
 	s.Args = p.Args
 }
+*/
 
-func (s *simple) by(pid int) (*Process, error) {
-	proc, err := Pid(pid)
-	if err != nil {
-		return nil, err
-	}
-	s.with(proc)
-	//s.Name = proc.Name
-	//s.State = proc.State
-	//s.Pid = proc.Pid
-	//s.PPid = proc.Ppid
-	//s.PGid = proc.Pgid
-	//s.Cmdline = proc.Cmdline
-	//s.Username = proc.Username
-	//s.Cwd = proc.Cwd
-	//s.Executable = proc.Executable
-	//s.Args = proc.Args
-	return proc, nil
+func (s *simple) with(p *Process) {
+	*s = simple(*p)
 }
 
 func (s *simple) binary() string {
@@ -75,11 +64,7 @@ func (s *simple) Equal(old *simple) bool {
 	switch {
 	case s.Name != old.Name:
 		return false
-	case s.State != old.State:
-		return false
-	case s.PPid != old.PPid:
-		return false
-	case s.PGid != old.PGid:
+	case s.Ppid != old.Ppid:
 		return false
 	case s.Cmdline != old.Cmdline:
 		return false
@@ -89,7 +74,10 @@ func (s *simple) Equal(old *simple) bool {
 		return false
 	case s.Executable != old.Executable:
 		return false
-	case s.ArgsToString() != old.ArgsToString():
+	case s.Mtime != old.Mtime:
+		return false
+
+	case s.Uptime != old.Uptime:
 		return false
 	}
 	return true

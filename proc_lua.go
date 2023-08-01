@@ -12,6 +12,32 @@ func (proc *Process) AssertString() (string, bool)           { return "", false 
 func (proc *Process) AssertFunction() (*lua.LFunction, bool) { return nil, false }
 func (proc *Process) Peek() lua.LValue                       { return proc }
 
+/*
+vela.ps().pipe(function(p)
+	p.handles
+end)
+
+*/
+
+func (proc *Process) Handle() lua.LValue {
+	s, err := proc.OpenFiles()
+	if err != nil {
+		xEnv.Errorf("pid=%d handle check fail %v", proc.Pid, err)
+		return lua.LNil
+	}
+
+	return &HandleSummary{Pid: proc.Pid, Err: err, Files: s}
+}
+
+func (proc *Process) showL(L *lua.LState) int {
+	if L.Console == nil {
+		return 0
+	}
+
+	L.Output(proc.String())
+	return 0
+}
+
 func (proc *Process) Index(L *lua.LState, key string) lua.LValue {
 	switch key {
 	case "name":
@@ -57,13 +83,25 @@ func (proc *Process) Index(L *lua.LState, key string) lua.LValue {
 		return lua.S2L(proc.Sha1())
 	case "md5":
 		return lua.S2L(proc.md5())
-
 	case "stime":
 		return lua.S2L(proc.StartTime)
 	case "p_cmdline":
-		return lua.S2L(proc.ParentCmdline)
+		proc.Parent()
+		if proc.pErr == nil {
+			return lua.S2L(proc.ParentCmdline)
+		}
+		return lua.LSNull
 	case "p_exe":
-		return lua.S2L(proc.ParentExecutable)
+		proc.Parent()
+		if proc.pErr == nil {
+			return lua.S2L(proc.ParentExecutable)
+		}
+		return lua.LSNull
+	case "handle":
+		return proc.Handle()
+	case "show":
+		return lua.NewFunction(proc.showL)
+
 	}
 
 	return lua.LNil

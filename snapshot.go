@@ -6,9 +6,7 @@ import (
 	"github.com/vela-ssoc/vela-kit/audit"
 	"github.com/vela-ssoc/vela-kit/auxlib"
 	"github.com/vela-ssoc/vela-kit/lua"
-	"github.com/vela-ssoc/vela-kit/opcode"
 	"github.com/vela-ssoc/vela-kit/pipe"
-	"github.com/vela-ssoc/vela-kit/vela"
 	"go.uber.org/ratelimit"
 	"gopkg.in/tomb.v2"
 	"reflect"
@@ -53,16 +51,15 @@ type snapshot struct {
 	state    uint32
 	flag     Model
 	co       *lua.LState
-	onCreate *pipe.Px
-	onDelete *pipe.Px
-	onUpdate *pipe.Px
-	by       func(int) (*Process, error)
-	store    func(vela.Bucket)
+	onCreate *pipe.Chains
+	onDelete *pipe.Chains
+	onUpdate *pipe.Chains
+	by       func(int32, *Option) (*Process, error)
 	ignore   *cond.Ignore
 	tomb     *tomb.Tomb
 	limit    ratelimit.Limiter
 	bkt      []string
-	current  map[int]*Process
+	current  map[int32]*Process
 	delete   map[string]interface{}
 	update   map[string]*Process
 	report   *report
@@ -112,19 +109,19 @@ func (snt *snapshot) withProcess(ps []*Process) {
 		return
 	}
 
-	if e := xEnv.TnlSend(opcode.OpProcessFull, ps); e != nil {
+	if e := xEnv.Push("/api/v1/broker/collect/agent/process/full", ps); e != nil {
 		xEnv.Errorf("process snapshot sync push fail %v", e)
 	}
 
 	//map fast match
-	snt.current = make(map[int]*Process, n)
+	snt.current = make(map[int32]*Process, n)
 	for i := 0; i < n; i++ {
 		p := ps[i]
 		snt.current[p.Pid] = p
 	}
 
 	//by pid find proc
-	snt.by = func(pid int) (*Process, error) {
+	snt.by = func(pid int32, opt *Option) (*Process, error) {
 		proc, ok := snt.current[pid]
 		if ok {
 			delete(snt.current, pid)
@@ -143,18 +140,18 @@ func (snt *snapshot) Ignore(p *Process) bool {
 	return snt.ignore.Match(p)
 }
 
-func (snt *snapshot) withList(list []int) {
+func (snt *snapshot) withList(list []int32) {
 	n := len(list)
 	p := &Process{Pid: -1}
-	snt.current = make(map[int]*Process, n)
+	snt.current = make(map[int32]*Process, n)
 	for i := 0; i < n; i++ {
 		pid := list[i]
 		snt.current[pid] = p
 	}
 
-	snt.by = func(pid int) (*Process, error) {
+	snt.by = func(pid int32, opt *Option) (*Process, error) {
 		delete(snt.current, pid)
-		p2, err := Pid(pid)
+		p2, err := Lookup(pid, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -229,44 +226,48 @@ func (snt *snapshot) wait() {
 	snt.limit.Take()
 }
 
-func (snt *snapshot) diff(key string, v interface{}) {
-	snt.wait()
+func (snt *snapshot) diff(opt *Option) func(key string, v interface{}) {
+	return func(key string, v interface{}) {
+		snt.wait()
+		pid, err := auxlib.ToInt32E(key)
+		if err != nil {
+			xEnv.Infof("got invalid pid %v", err)
+			snt.delete[key] = v
+			snt.report.OnDelete(pid)
+			return
+		}
 
-	pid, err := auxlib.ToIntE(key)
-	if err != nil {
-		xEnv.Infof("got invalid pid %v", err)
-		snt.delete[key] = v
-		snt.report.OnDelete(pid)
-		return
-	}
+		old, ok := v.(*simple)
+		if !ok {
+			xEnv.Infof("invalid process simple %v", v)
+			snt.delete[key] = v
+			snt.report.OnDelete(pid)
+			return
+		}
 
-	old, ok := v.(*simple)
-	if !ok {
-		xEnv.Infof("invalid process simple %v", v)
-		snt.delete[key] = v
-		snt.report.OnDelete(pid)
-		return
-	}
+		if _, exist := snt.current[pid]; !exist {
+			snt.delete[key] = v
+			snt.report.OnDelete(pid)
+			return
+		}
 
-	if _, exist := snt.current[pid]; !exist {
-		snt.delete[key] = v
-		snt.report.OnDelete(pid)
-		return
-	}
+		p, er := snt.by(pid, opt)
+		if er != nil {
+			//xEnv.Infof("not found pid:%d process %v", pid, er)
+			snt.delete[key] = v
+			snt.report.OnDelete(pid)
+			return
+		}
 
-	p, er := snt.by(pid)
-	if er != nil {
-		xEnv.Infof("not found pid:%d process %v", pid, er)
-		snt.delete[key] = v
-		snt.report.OnDelete(pid)
-		return
-	}
+		sim := &simple{}
+		sim.with(p)
+		if !sim.Equal(old) {
+			snt.update[key] = p
+			p.Sha1()
+			p.LookupParent(opt)
+			snt.report.OnUpdate(p)
+		}
 
-	sim := &simple{}
-	sim.with(p)
-	if !sim.Equal(old) {
-		snt.update[key] = p
-		snt.report.OnUpdate(p)
 	}
 }
 
@@ -288,17 +289,19 @@ func (snt *snapshot) poll(td time.Duration) {
 			xEnv.Errorf("%s snapshot over", snt.Name())
 			return
 		case <-tk.C:
+			if xEnv.Quiet() {
+				continue
+			}
 			snt.run()
 		}
 	}
 }
 
-func (snt *snapshot) run() {
+func (snt *snapshot) run(opts ...OptionFunc) {
 	if snt.IsRun() {
 		xEnv.Errorf("process running by %s", snt.flag.String())
 		return
 	}
-
 	defer snt.End()
 
 	if !snt.constructor(WORK) {
@@ -306,17 +309,22 @@ func (snt *snapshot) run() {
 		return
 	}
 
-	bkt := xEnv.Bucket(snt.bkt...)
-	bkt.Range(snt.diff)
-	snt.Create(bkt)
-	snt.Delete(bkt)
-	snt.Update(bkt)
-	snt.doReport()
+	opt := NewOption()
+	for _, fn := range opts {
+		fn(opt)
+	}
+	opt.Cache = make(map[int32]*Process)
 
+	bkt := xEnv.Bucket(snt.bkt...)
+	bkt.Range(snt.diff(opt))
+	snt.Create(bkt, opt)
+	snt.Delete(bkt, opt)
+	snt.Update(bkt, opt)
+	snt.doReport()
 	snt.reset()
 }
 
-func (snt *snapshot) sync() {
+func (snt *snapshot) sync(opts ...OptionFunc) {
 	if snt.IsRun() {
 		xEnv.Errorf("process running by %s", snt.flag.String())
 		return
@@ -328,10 +336,15 @@ func (snt *snapshot) sync() {
 		return
 	}
 
+	opt := NewOption()
+	for _, fn := range opts {
+		fn(opt)
+	}
+
 	bkt := xEnv.Bucket(snt.bkt...)
-	bkt.Range(snt.diff)
-	snt.Create(bkt)
-	snt.Delete(bkt)
-	snt.Update(bkt)
+	bkt.Range(snt.diff(opt))
+	snt.Create(bkt, opt)
+	snt.Delete(bkt, opt)
+	snt.Update(bkt, opt)
 	snt.reset()
 }
