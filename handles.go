@@ -94,7 +94,7 @@ func (hs *HandleSummary) pipeL(L *lua.LState) int {
 			Fd:   item.Fd,
 		}
 		chains.Do(f, co, func(err error) {
-			xEnv.Errorf("process handles pipe call fail %v", err)
+			xEnv.Debugf("process handles pipe call fail %v", err)
 		})
 	}
 

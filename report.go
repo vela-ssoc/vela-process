@@ -1,7 +1,7 @@
 package process
 
 type report struct {
-	Deletes []int32    `json:"deletes"`
+	Deletes []*Process `json:"deletes"`
 	Updates []*Process `json:"updates"`
 	Creates []*Process `json:"creates"`
 }
@@ -16,7 +16,7 @@ func (r *report) OnUpdate(p *Process) {
 	r.Updates = append(r.Updates, p)
 }
 
-func (r *report) OnDelete(p int32) {
+func (r *report) OnDelete(p *Process) {
 	r.Deletes = append(r.Deletes, p)
 }
 
@@ -28,8 +28,8 @@ func (r *report) do() {
 	if r.Len() == 0 {
 		return
 	}
-	err := xEnv.Push("/api/v1/broker/collect/agent/process/diff", r)
-	if err != nil {
-		xEnv.Errorf("tunnel send push diff fail %v", err)
-	}
+	//err := xEnv.Push("/api/v1/broker/collect/agent/process/diff", r)
+	//if err != nil {
+	//	xEnv.Errorf("tunnel send push diff fail %v", err)
+	//}
 }

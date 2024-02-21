@@ -5,6 +5,7 @@ import (
 	"github.com/shirou/gopsutil/process"
 	"github.com/vela-ssoc/vela-kit/fileutil"
 	"strings"
+	"time"
 )
 
 func (proc *Process) Kill() error {
@@ -31,10 +32,6 @@ func (proc *Process) LookupCPU(p *process.Process) error {
 		return err
 	}
 
-	proc.UserTicks = cpu.User
-	proc.SystemTicks = cpu.Sys
-	proc.TotalTicks = cpu.Total
-
 	if pct, e := p.CPUPercent(); e == nil {
 		proc.CpuPct = pct
 	} else {
@@ -52,15 +49,46 @@ func (proc *Process) LookupParent(opt *Option) error {
 		return nil
 	}
 
-	pp, err := Lookup(proc.Ppid, opt)
+	ps, err := process.NewProcess(proc.Ppid)
 	if err != nil {
 		return err
 	}
 
-	proc.ParentExecutable = pp.Executable
-	proc.ParentCmdline = pp.Cmdline
-	proc.ParentUsername = pp.Username
+	proc.ParentExecutable, _ = ps.Exe()
+	proc.ParentCmdline, _ = ps.Cmdline()
+	proc.ParentUsername, _ = ps.Username()
 	return nil
+}
+
+func (proc *Process) Hash() string {
+	if proc.Md5 != "" {
+		return proc.Md5
+	}
+
+	if proc.Executable == "" {
+		return ""
+	}
+
+	csm, err := hash(proc.Executable)
+	if err != nil {
+		return ""
+	}
+
+	proc.Md5 = csm.Md5
+	proc.Checksum = csm.Sha1
+	proc.Mtime = time.Unix(csm.MTime, 0)
+	proc.Ctime = time.Unix(csm.CTime, 0)
+
+	return proc.Md5
+}
+
+func (proc *Process) Python() {
+}
+
+func (proc *Process) bash() {
+}
+
+func (proc *Process) Java() {
 }
 
 func (proc *Process) md5() string {
@@ -78,6 +106,8 @@ func (proc *Process) md5() string {
 	}
 	proc.Md5 = csm.Md5
 	proc.Checksum = csm.Sha1
+	proc.Mtime = time.Unix(csm.MTime, 0)
+	proc.Ctime = time.Unix(csm.CTime, 0)
 	return proc.Md5
 }
 
@@ -94,20 +124,14 @@ func (proc *Process) Sha1() string {
 	if err == nil {
 		proc.Checksum = csm.Sha1
 		proc.Md5 = csm.Md5
+		proc.Mtime = time.Unix(csm.MTime, 0)
+		proc.Ctime = time.Unix(csm.CTime, 0)
 	}
 
 	return proc.Checksum
 }
 
 func (proc *Process) LookupMem(p *process.Process) error {
-	mem, err := p.MemoryInfo()
-	if err != nil {
-		return err
-	}
-	proc.MemSize = mem.HWM
-	proc.RssBytes = mem.RSS
-	proc.Share = mem.Swap
-
 	if pct, e := p.MemoryPercent(); e == nil {
 		proc.MemPct = pct
 	} else {
@@ -140,42 +164,6 @@ func (proc *Process) LookupFileStat() error {
 	proc.Ctime = ct
 	proc.Mtime = mt
 
-	return nil
-}
-
-func (proc *Process) Lookup(opt *Option) error {
-	ps, err := process.NewProcess(proc.Pid)
-	if err != nil {
-		return err
-	}
-
-	if v, e := ps.Name(); e == nil {
-		proc.Name = v
-	} else {
-		return e
-	}
-
-	if v, e := ps.Ppid(); e == nil {
-		proc.Ppid = v
-	}
-
-	if v, e := ps.Tgid(); e == nil {
-		proc.Pgid = v
-	}
-
-	if v, e := ps.Username(); e == nil {
-		proc.Username = v
-	}
-
-	if v, e := ps.Status(); e == nil {
-		proc.State = state(v)
-	}
-
-	proc.LookupExec(ps)
-	proc.LookupMem(ps)
-	proc.LookupCPU(ps)
-	proc.LookupCreateTime(ps)
-	proc.LookupFileStat()
 	return nil
 }
 

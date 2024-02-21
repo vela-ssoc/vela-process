@@ -2,6 +2,7 @@ package process
 
 import (
 	"github.com/vela-ssoc/vela-kit/lua"
+	"runtime"
 	"strings"
 )
 
@@ -22,8 +23,8 @@ end)
 func (proc *Process) Handle() lua.LValue {
 	s, err := proc.OpenFiles()
 	if err != nil {
-		xEnv.Errorf("pid=%d handle check fail %v", proc.Pid, err)
-		return lua.LNil
+		xEnv.Debugf("pid=%d handle check fail %v", proc.Pid, err)
+		return &HandleSummary{Pid: proc.Pid, Err: err, Files: s}
 	}
 
 	return &HandleSummary{Pid: proc.Pid, Err: err, Files: s}
@@ -38,8 +39,33 @@ func (proc *Process) showL(L *lua.LState) int {
 	return 0
 }
 
+func (proc *Process) params() lua.LValue {
+	params := lua.NewSlice(0)
+
+	n := len(proc.Args)
+	if n == 0 {
+		return params
+	}
+
+	for i := 0; i < n; i++ {
+		if v := proc.Args[i]; len(v) > 0 {
+			params = append(params, lua.S2L(v))
+		}
+	}
+	return params
+}
+
 func (proc *Process) Index(L *lua.LState, key string) lua.LValue {
 	switch key {
+	case "os":
+		return lua.S2L(runtime.GOOS)
+	case "minion_ip", "ip":
+		return lua.S2L(xEnv.Inet())
+	case "minion_id":
+		return lua.S2L(xEnv.ID())
+	case "ok":
+		return lua.LBool(proc.err == nil)
+
 	case "name":
 		return lua.S2L(proc.Name)
 
@@ -55,6 +81,9 @@ func (proc *Process) Index(L *lua.LState, key string) lua.LValue {
 	case "cmd":
 		return lua.S2L(proc.Cmdline)
 
+	case "cmdline":
+		return lua.S2L(proc.Cmdline)
+
 	case "cwd":
 		return lua.S2L(proc.Cwd)
 
@@ -65,17 +94,7 @@ func (proc *Process) Index(L *lua.LState, key string) lua.LValue {
 		return lua.S2L(proc.State)
 
 	case "args":
-		return lua.S2L(strings.Join(proc.Args, " "))
-
-	case "memory":
-		return lua.LNumber(proc.MemSize)
-	case "rss":
-		return lua.LNumber(proc.RssBytes)
-
-	case "rss_pct":
-		return lua.LNumber(proc.RssPct)
-	case "share":
-		return lua.LNumber(proc.Share)
+		return proc.params()
 
 	case "username":
 		return lua.S2L(proc.Username)
@@ -83,8 +102,13 @@ func (proc *Process) Index(L *lua.LState, key string) lua.LValue {
 		return lua.S2L(proc.Sha1())
 	case "md5":
 		return lua.S2L(proc.md5())
-	case "stime":
-		return lua.S2L(proc.StartTime)
+	case "p_name":
+		proc.Parent()
+		if proc.pErr == nil {
+			return lua.S2L(proc.ParentName)
+		}
+		return lua.LSNull
+
 	case "p_cmdline":
 		proc.Parent()
 		if proc.pErr == nil {
@@ -97,11 +121,21 @@ func (proc *Process) Index(L *lua.LState, key string) lua.LValue {
 			return lua.S2L(proc.ParentExecutable)
 		}
 		return lua.LSNull
+	case "p_username":
+		proc.Parent()
+		if proc.pErr == nil {
+			return lua.S2L(proc.ParentUsername)
+		}
+		return lua.LSNull
+
 	case "handle":
 		return proc.Handle()
+	case "uptime":
+		return lua.LInt64(proc.Uptime)
 	case "show":
 		return lua.NewFunction(proc.showL)
-
+	case "pid_tree":
+		return lua.S2L(strings.Join(proc.PidTree, ">"))
 	}
 
 	return lua.LNil

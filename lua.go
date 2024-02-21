@@ -79,6 +79,13 @@ done:
 	return 1
 }
 
+func cntL(L *lua.LState) int {
+	sum := NewSumL(L)
+	sum.init()
+	L.Push(lua.LInt(len(sum.Pids)))
+	return 1
+}
+
 func snapshotL(L *lua.LState) int {
 	snt := newSnapshot(L)
 	if snt == nil {
@@ -135,6 +142,12 @@ func filterL(L *lua.LState) int {
 	return 1
 }
 
+func fastL(L *lua.LState) int {
+	pid := L.CheckInt(1)
+	L.Push(LookupWithBucket(int32(pid)))
+	return 1
+}
+
 func WithEnv(env vela.Environment) {
 	xEnv = env
 	define(env.R())
@@ -149,12 +162,14 @@ func WithEnv(env vela.Environment) {
 	tab.Set("ppid", lua.NewFunction(ppidL))
 	tab.Set("filter", lua.NewFunction(filterL))
 	tab.Set("snapshot", lua.NewFunction(snapshotL))
+	tab.Set("cnt", lua.NewFunction(cntL))
 
+	tab.Set("fast", lua.NewFunction(fastL))
 	env.Set("ps",
 		lua.NewExport("vela.ps.export",
 			lua.WithTable(tab),
 			lua.WithFunc(allL)))
 
 	//注册加解密
-	xEnv.Mime(simple{}, encode, decode)
+	xEnv.Mime(Process{}, encode, decode)
 }

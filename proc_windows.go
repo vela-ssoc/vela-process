@@ -23,3 +23,120 @@ func (proc *Process) LookupExec(p *process.Process) error {
 
 	return nil
 }
+
+func (proc *Process) Lookup(opt *Option) error {
+	ps, err := process.NewProcess(proc.Pid)
+	if err != nil {
+		return err
+	}
+
+	if v, e := ps.Name(); e == nil {
+		proc.Name = v
+	} else {
+		return e
+	}
+
+	if v, e := ps.Ppid(); e == nil {
+		proc.Ppid = v
+	}
+
+	if v, e := ps.Tgid(); e == nil {
+		proc.Pgid = v
+	}
+
+	if v, e := ps.Username(); e == nil {
+		proc.Username = v
+	}
+
+	if v, e := ps.Status(); e == nil {
+		proc.State = state(v)
+	}
+
+	proc.LookupExec(ps)
+	proc.LookupMem(ps)
+	proc.LookupCPU(ps)
+	proc.LookupCreateTime(ps)
+	proc.LookupFileStat()
+	return nil
+}
+
+func Pid(pid int32, opts ...OptionFunc) (*Process, error) {
+	opt := &Option{
+		Cpu:    true,
+		Mem:    true,
+		Parent: true,
+	}
+
+	for _, fn := range opts {
+		fn(opt)
+	}
+	return Lookup(pid, opt)
+}
+
+func Find(pid int32) (*Process, error) {
+	proc := &Process{Pid: pid}
+	ps, err := process.NewProcess(pid)
+	if err != nil {
+		return proc, err
+	}
+
+	if v, e := ps.Name(); e == nil {
+		proc.Name = v
+	} else {
+		return proc, e
+	}
+
+	if v, e := ps.Ppid(); e == nil {
+		proc.Ppid = v
+	}
+
+	if v, e := ps.Tgid(); e == nil {
+		proc.Pgid = v
+	}
+
+	if v, e := ps.Username(); e == nil {
+		proc.Username = v
+	}
+
+	if v, e := ps.Status(); e == nil {
+		proc.State = state(v)
+	}
+
+	proc.LookupExec(ps)
+	return proc, nil
+}
+
+func Fast(pid int32) (*Process, error) {
+	proc := &Process{Pid: pid}
+	ps, err := process.NewProcess(pid)
+	if err != nil {
+		return proc, err
+	}
+
+	if v, e := ps.Name(); e == nil {
+		proc.Name = v
+	} else {
+		return proc, e
+	}
+
+	if v, e := ps.Ppid(); e == nil {
+		proc.Ppid = v
+	}
+
+	if v, e := ps.Tgid(); e == nil {
+		proc.Pgid = v
+	}
+
+	if v, e := ps.Username(); e == nil {
+		proc.Username = v
+	}
+
+	if v, e := ps.Status(); e == nil {
+		proc.State = state(v)
+	}
+
+	proc.LookupExec(ps)
+	proc.LookupCPU(ps)
+	proc.LookupCreateTime(ps)
+	return proc, nil
+}

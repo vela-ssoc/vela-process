@@ -2,7 +2,6 @@ package process
 
 import (
 	cond "github.com/vela-ssoc/vela-cond"
-	"github.com/vela-ssoc/vela-kit/auxlib"
 	"github.com/vela-ssoc/vela-kit/lua"
 	"github.com/vela-ssoc/vela-kit/pipe"
 	"go.uber.org/ratelimit"
@@ -11,22 +10,23 @@ import (
 	"time"
 )
 
-func (snt *snapshot) deleteL(L *lua.LState) int {
-	snt.onDelete.CheckMany(L, pipe.Seek(0))
+func (sa *snapshot) deleteL(L *lua.LState) int {
+	sa.onDelete.CheckMany(L, pipe.Seek(0))
 	return 0
 }
 
-func (snt *snapshot) createL(L *lua.LState) int {
-	snt.onCreate.CheckMany(L, pipe.Seek(0))
+func (sa *snapshot) createL(L *lua.LState) int {
+	sa.onCreate.CheckMany(L, pipe.Seek(0))
 	return 0
 }
 
-func (snt *snapshot) updateL(L *lua.LState) int {
-	snt.onUpdate.CheckMany(L, pipe.Seek(0))
+func (sa *snapshot) updateL(L *lua.LState) int {
+	sa.onUpdate.CheckMany(L, pipe.Seek(0))
 	return 0
 }
 
-func (snt *snapshot) bucketL(L *lua.LState) int {
+/*
+func (sa *snapshot) bucketL(L *lua.LState) int {
 	n := L.GetTop()
 	if n == 0 {
 		return 0
@@ -38,18 +38,19 @@ func (snt *snapshot) bucketL(L *lua.LState) int {
 		bkt = append(bkt, L.CheckString(i))
 	}
 
-	snt.bkt = bkt
+	sa.bkt = bkt
+	return 0
+}
+*/
+
+func (sa *snapshot) runL(L *lua.LState) int {
+	sa.V(lua.VTRun, time.Now())
+	sa.detect()
+	sa.V(lua.VTMode, time.Now())
 	return 0
 }
 
-func (snt *snapshot) runL(L *lua.LState) int {
-	snt.V(lua.VTRun, time.Now())
-	snt.run()
-	snt.V(lua.VTMode, time.Now())
-	return 0
-}
-
-func (snt *snapshot) pollL(L *lua.LState) int {
+func (sa *snapshot) pollL(L *lua.LState) int {
 	var interval time.Duration
 	n := L.IsInt(1)
 	if n < 1 {
@@ -58,34 +59,34 @@ func (snt *snapshot) pollL(L *lua.LState) int {
 		interval = time.Duration(n) * time.Second
 	}
 
-	snt.tomb = new(tomb.Tomb)
+	sa.tomb = new(tomb.Tomb)
 	xEnv.Spawn(0, func() {
-		snt.poll(interval)
+		sa.poll(interval)
 	})
-	snt.V(lua.VTRun, time.Now())
+	sa.V(lua.VTRun, time.Now())
 	return 0
 }
 
-func (snt *snapshot) limitL(L *lua.LState) int {
+func (sa *snapshot) limitL(L *lua.LState) int {
 	n := L.IsInt(1)
 	if n <= 0 {
 		return 0
 	}
 
-	snt.limit = ratelimit.New(n)
+	sa.limit = ratelimit.New(n)
 	return 0
 }
 
-func (snt *snapshot) ignoreL(L *lua.LState) int {
-	if snt.ignore == nil {
-		snt.ignore = cond.NewIgnore()
+func (sa *snapshot) ignoreL(L *lua.LState) int {
+	if sa.ignore == nil {
+		sa.ignore = cond.NewIgnore()
 	}
 
-	snt.ignore.CheckMany(L)
+	sa.ignore.CheckMany(L)
 	return 0
 }
 
-func (snt *snapshot) notAgtL(L *lua.LState) int {
+func (sa *snapshot) notAgtL(L *lua.LState) int {
 	var exe string
 	var err error
 	exe, err = os.Executable()
@@ -97,27 +98,28 @@ func (snt *snapshot) notAgtL(L *lua.LState) int {
 
 done:
 
-	if snt.ignore == nil {
-		snt.ignore = cond.NewIgnore()
+	if sa.ignore == nil {
+		sa.ignore = cond.NewIgnore()
 	}
-	snt.ignore.Add(cond.New("exe =" + exe))
-	snt.ignore.Add(cond.New("p_exe =" + exe))
-	snt.ignore.Add(cond.New("name = ssc-worker.exe,ssc-mgt.exe"))
+	sa.ignore.Add(cond.New("exe =" + exe))
+	sa.ignore.Add(cond.New("p_exe =" + exe))
+	sa.ignore.Add(cond.New("name = ssc-worker.exe,ssc-mgt.exe"))
 	return 0
 }
 
-func (snt *snapshot) pullL(L *lua.LState) int {
+/*
+func (sa *snapshot) pullL(L *lua.LState) int {
 	path := L.CheckString(1)
 	r := reply{}
 	err := xEnv.JSON(path, nil, &r)
 	//err := xEnv.GET(path, "").JSON(&r)
 	if err != nil {
-		L.RaiseError("%s process snap pull process fail %v", snt.Name(), err)
+		L.RaiseError("%s process snap pull process fail %v", sa.Name(), err)
 	}
 
-	bkt := xEnv.Bucket(snt.bkt...)
+	bkt := xEnv.Bucket(sa.bkt...)
 	bkt.Clear()
-	snt.debug()
+	sa.debug()
 
 	size := len(r.Data)
 	if size == 0 {
@@ -131,41 +133,44 @@ func (snt *snapshot) pullL(L *lua.LState) int {
 	bkt.BatchStore(tuple, 0)
 	return 0
 }
+*/
 
-func (snt *snapshot) debugL(L *lua.LState) int {
-	snt.debug()
+func (sa *snapshot) debugL(L *lua.LState) int {
+	sa.debug()
 	return 0
 }
 
-func (snt *snapshot) syncL(L *lua.LState) int {
-	snt.sync()
+func (sa *snapshot) CacheBucketL(L *lua.LState) int {
+
 	return 0
 }
 
-func (snt *snapshot) Index(L *lua.LState, key string) lua.LValue {
+func (sa *snapshot) Index(L *lua.LState, key string) lua.LValue {
 	switch key {
-	case "pull":
-		return lua.NewFunction(snt.pullL)
+	//case "pull":
+	//	return lua.NewFunction(sa.pullL)
 	case "not_agent":
-		return lua.NewFunction(snt.notAgtL)
+		return lua.NewFunction(sa.notAgtL)
 	case "debug":
-		return lua.NewFunction(snt.debugL)
+		return lua.NewFunction(sa.debugL)
 	case "run":
-		return lua.NewFunction(snt.runL)
+		return lua.NewFunction(sa.runL)
 	case "poll":
-		return lua.NewFunction(snt.pollL)
+		return lua.NewFunction(sa.pollL)
 	case "limit":
-		return lua.NewFunction(snt.limitL)
+		return lua.NewFunction(sa.limitL)
 	case "ignore":
-		return lua.NewFunction(snt.ignoreL)
-	case "sync":
-		return lua.NewFunction(snt.syncL)
+		return lua.NewFunction(sa.ignoreL)
 	case "on_create":
-		return lua.NewFunction(snt.createL)
+		return lua.NewFunction(sa.createL)
 	case "on_delete":
-		return lua.NewFunction(snt.deleteL)
+		return lua.NewFunction(sa.deleteL)
 	case "on_update":
-		return lua.NewFunction(snt.updateL)
+		return lua.NewFunction(sa.updateL)
+	case "cache":
+		return lua.NewFunction(sa.CacheBucketL)
+	case "case":
+		return sa.vsh.Index(L, "case")
 	}
 
 	return lua.LNil
