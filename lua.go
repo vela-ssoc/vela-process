@@ -171,5 +171,5 @@ func WithEnv(env vela.Environment) {
 			lua.WithFunc(allL)))
 
 	//注册加解密
-	xEnv.Mime(Process{}, encode, decode)
+	xEnv.Mime(&Process{}, encode, decode)
 }

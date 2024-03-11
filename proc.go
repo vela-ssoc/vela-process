@@ -2,12 +2,11 @@ package process
 
 import (
 	"bytes"
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v3/process"
 	"github.com/vela-ssoc/vela-kit/auxlib"
 	"github.com/vela-ssoc/vela-kit/grep"
 	"github.com/vela-ssoc/vela-kit/kind"
 	"runtime"
-	"strings"
 	"time"
 )
 
@@ -29,7 +28,7 @@ type Process struct {
 	Args       []string  `json:"args"`
 	Uptime     int64     `json:"uptime"`
 	CpuPct     float64   `json:"cpu_pct"`
-	PidTree    []string  `json:"pid_tree"`
+	PidTree    ProcTree  `json:"pid_tree"`
 
 	//Memory
 	MemPct float32 `json:"mem_pct"`
@@ -131,7 +130,7 @@ func (proc *Process) Byte() []byte {
 	enc.KV("parent_cmdline", proc.ParentCmdline)
 	enc.KV("parent_executable", proc.ParentExecutable)
 	enc.KV("parent_username", proc.ParentUsername)
-	enc.KV("pid_tree", strings.Join(proc.PidTree, ">"))
+	enc.KV("pid_tree", proc.PidTree.Text())
 	enc.End("}")
 	return enc.Bytes()
 }
@@ -218,7 +217,7 @@ func Lookup(pid int32, opt *Option) (*Process, error) {
 
 func LookupWithBucket(pid int32) *Process {
 	key := auxlib.ToString(pid)
-	bkt := xEnv.Bucket(_Bucket...)
+	bkt := xEnv.Shm(V_PROC_SHM)
 
 	obj, err := bkt.Get(key)
 	if err != nil {

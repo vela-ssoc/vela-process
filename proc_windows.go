@@ -1,7 +1,8 @@
 package process
 
 import (
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v3/process"
+	"strings"
 )
 
 func (proc *Process) LookupExec(p *process.Process) error {
@@ -49,7 +50,7 @@ func (proc *Process) Lookup(opt *Option) error {
 	}
 
 	if v, e := ps.Status(); e == nil {
-		proc.State = state(v)
+		proc.State = strings.Join(v, "|")
 	}
 
 	proc.LookupExec(ps)
@@ -99,7 +100,7 @@ func Find(pid int32) (*Process, error) {
 	}
 
 	if v, e := ps.Status(); e == nil {
-		proc.State = state(v)
+		proc.State = strings.Join(v, "|")
 	}
 
 	proc.LookupExec(ps)
@@ -132,7 +133,7 @@ func Fast(pid int32) (*Process, error) {
 	}
 
 	if v, e := ps.Status(); e == nil {
-		proc.State = state(v)
+		proc.State = strings.Join(v, "|")
 	}
 
 	proc.LookupExec(ps)

@@ -21,9 +21,11 @@ func decode(data []byte) (interface{}, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
-
 	var p Process
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	err := dec.Decode(&p)
-	return &p, err
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
 }

@@ -3,7 +3,6 @@ package process
 import (
 	"github.com/vela-ssoc/vela-kit/lua"
 	"runtime"
-	"strings"
 )
 
 func (proc *Process) String() string                         { return lua.B2S(proc.Byte()) }
@@ -135,7 +134,7 @@ func (proc *Process) Index(L *lua.LState, key string) lua.LValue {
 	case "show":
 		return lua.NewFunction(proc.showL)
 	case "pid_tree":
-		return lua.S2L(strings.Join(proc.PidTree, ">"))
+		return lua.S2L(proc.PidTree.Text())
 	}
 
 	return lua.LNil

@@ -2,9 +2,9 @@ package process
 
 import (
 	"bytes"
-	"fmt"
-	"github.com/vela-ssoc/vela-kit/audit"
 	"github.com/vela-ssoc/vela-kit/auxlib"
+	"github.com/vela-ssoc/vela-kit/pipe"
+	"github.com/vela-ssoc/vela-kit/strutil"
 	"github.com/vela-ssoc/vela-kit/vela"
 	"strings"
 	"time"
@@ -83,33 +83,10 @@ func (sa *snapshot) LookupParent(pex *ProcEx) (*ProcEx, error) {
 	return ppex, nil
 }
 
-func (sa *snapshot) LookupPidTree(pex *ProcEx, tree []string) []string {
-	if pex == nil || pex.value.Ppid == 0 {
-		return tree
-	}
-
-	var err error
-	var ppex *ProcEx
-
-	ppex, err = sa.LookupParent(pex)
-	if err != nil {
-		return tree
-	}
-
-	tree = append([]string{fmt.Sprintf("%d.%s", pex.value.Ppid, pex.value.ParentName)}, tree...)
-	tree = sa.LookupPidTree(ppex, tree)
-
-	return tree
-}
-
 func (sa *snapshot) LookupAll(pex *ProcEx) (*Process, error) {
 
 	if cwd, err := pex.ps.Cwd(); err == nil {
 		pex.value.Cwd = cwd
-	}
-
-	if status, err := pex.ps.Status(); err == nil {
-		pex.value.State = status
 	}
 
 	if exe, err := pex.ps.Exe(); err == nil {
@@ -136,15 +113,11 @@ func (sa *snapshot) LookupAll(pex *ProcEx) (*Process, error) {
 	if pex.value.Ppid == pex.value.Pid {
 		return pex.value, nil
 	}
-
-	pex.value.PidTree = sa.LookupPidTree(pex, []string{fmt.Sprintf("%d.%s", pex.pid, pex.Name())})
-
 	return pex.value, nil
 }
 
 func (sa *snapshot) Create(bkt vela.Bucket) {
 	for pid, _ := range sa.current {
-		key := auxlib.ToString(pid)
 		pex, err := sa.simple(pid)
 		if err != nil {
 			//xEnv.Errorf("not found pid=%d process on create fail %v", pid, err)
@@ -156,15 +129,17 @@ func (sa *snapshot) Create(bkt vela.Bucket) {
 			xEnv.Errorf("pid=%d process lookup all fail %v", pid, err)
 		}
 
-		if sa.Ignore(proc) {
-			continue
-		}
-		sa.vsh.Do(proc)
+		//if sa.Ignore(proc) {
+		//	continue
+		//}
+		//sa.vsh.Do(proc)
+		//key := strutil.String(pid)
+		//bkt.Store(key, proc, 0)
+
 		sa.report.OnCreate(proc)
-		bkt.Store(key, proc, 0)
-		sa.onCreate.Do(proc, sa.co, func(err error) {
-			audit.Errorf("%s process snapshot create fail %v", sa.Name(), err).From(sa.co.CodeVM()).Put()
-		})
+		//sa.onCreate.Do(proc, sa.co, func(err error) {
+		//	audit.Errorf("%s process snapshot create fail %v", sa.Name(), err).From(sa.co.CodeVM()).Put()
+		//})
 	}
 
 }
@@ -174,9 +149,9 @@ func (sa *snapshot) Delete(bkt vela.Bucket) {
 		if e := bkt.Delete(pid); e != nil {
 			xEnv.Errorf("delete process pid:%s val: %v fail %v", pid, val, e)
 		}
-		sa.onDelete.Do(val, sa.co, func(err error) {
-			audit.Errorf("%s process snapshot delete fail %v", sa.Name(), err).From(sa.co.CodeVM()).Put()
-		})
+		//sa.onDelete.Do(val, sa.co, func(err error) {
+		//	audit.Errorf("%s process snapshot delete fail %v", sa.Name(), err).From(sa.co.CodeVM()).Put()
+		//})
 	}
 }
 
@@ -187,19 +162,19 @@ func (sa *snapshot) Update(bkt vela.Bucket) {
 			xEnv.Errorf("not found process info %v", err)
 		}
 
-		key := auxlib.ToString(pid)
+		key := strutil.String(pid)
 		bkt.Store(key, proc, 0)
 		sa.vsh.Do(proc)
 		sa.report.OnUpdate(pex.value)
-		sa.onUpdate.Do(proc, sa.co, func(err error) {
-			audit.Errorf("%s process snapshot update fail %v", sa.Name(), err).From(sa.co.CodeVM()).Put()
-		})
+		//sa.onUpdate.Do(proc, sa.co, func(err error) {
+		//	audit.Errorf("%s process snapshot update fail %v", sa.Name(), err).From(sa.co.CodeVM()).Put()
+		//})
 	}
 }
 
 func (sa *snapshot) debug() {
 	var buff bytes.Buffer
-	bkt := xEnv.Bucket(sa.bkt...)
+	bkt := xEnv.Shm(V_PROC_SHM)
 	bkt.Range(func(s string, i interface{}) {
 		buff.WriteString(s)
 		buff.WriteByte(':')
@@ -210,7 +185,68 @@ func (sa *snapshot) debug() {
 	xEnv.Error(buff.String())
 }
 
-func (sa *snapshot) doReport() {
+func (sa *snapshot) tree(ppid int32, treeEx *ProcTree) {
+	if ppid == 0 {
+		return
+	}
+
+	pex, ok := sa.factory[ppid]
+	if !ok {
+		return
+	}
+
+	treeEx.Add(pex.value.Pid, pex.value.Name)
+
+	sa.tree(pex.value.Ppid, treeEx)
+}
+
+func (sa *snapshot) Tree(proc *Process) ProcTree {
+	treeEx := ProcTree{
+		Pids: []int32{proc.Pid},
+		Tree: []string{proc.Name},
+	}
+
+	sa.tree(proc.Ppid, &treeEx)
+	return treeEx
+}
+
+func (sa *snapshot) doReport(bkt vela.Bucket) {
+
+	fnc := func(proc *Process, chain *pipe.Chains, flag bool) {
+		proc.PidTree = sa.Tree(proc)
+		key := strutil.String(proc.Pid)
+		if flag {
+			_ = bkt.Store(key, proc, 0)
+		}
+
+		if sa.Ignore(proc) {
+			return
+		}
+
+		sa.vsh.Do(proc)
+		chain.Do(proc, sa.co, func(err error) {
+			xEnv.Errorf("%s snapshot call fail %v", sa.Name(), err)
+		})
+	}
+
+	n := len(sa.report.Creates)
+	for i := 0; i < n; i++ {
+		proc := sa.report.Creates[i]
+		fnc(proc, sa.onCreate, true)
+	}
+
+	n = len(sa.report.Updates)
+	for i := 0; i < n; i++ {
+		proc := sa.report.Updates[i]
+		fnc(proc, sa.onUpdate, true)
+	}
+
+	n = len(sa.report.Deletes)
+	for i := 0; i < n; i++ {
+		proc := sa.report.Deletes[i]
+		fnc(proc, sa.onDelete, false)
+	}
+
 	if !sa.enable {
 		return
 	}

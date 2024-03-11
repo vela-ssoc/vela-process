@@ -1,7 +1,7 @@
 package process
 
 import (
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v3/process"
 	cond "github.com/vela-ssoc/vela-cond"
 	"github.com/vela-ssoc/vela-kit/auxlib"
 	"github.com/vela-ssoc/vela-kit/lua"
@@ -18,7 +18,7 @@ type summary struct {
 	Zombie   uint32 `json:"zombie"`
 
 	Process []*Process      `json:"process"`
-	Pids    []int32         `json:"pids"`
+	Pids    []int32         `json:"Pids"`
 	Error   error           `json:"-"`
 	vsh     *vswitch.Switch `json:"-"`
 	co      *lua.LState     `json:"-"`

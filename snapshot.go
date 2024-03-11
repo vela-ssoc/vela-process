@@ -1,17 +1,19 @@
 package process
 
 import (
+	"bytes"
 	"fmt"
-	"github.com/elastic/gosigar"
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v3/process"
 	cond "github.com/vela-ssoc/vela-cond"
 	"github.com/vela-ssoc/vela-kit/auxlib"
 	"github.com/vela-ssoc/vela-kit/lua"
 	"github.com/vela-ssoc/vela-kit/pipe"
+	"github.com/vela-ssoc/vela-kit/strutil"
 	vswitch "github.com/vela-ssoc/vela-switch"
 	"go.uber.org/ratelimit"
 	"gopkg.in/tomb.v2"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -20,8 +22,8 @@ var (
 	snapshotTypeof = reflect.TypeOf((*snapshot)(nil)).String()
 )
 
-var (
-	_Bucket = []string{"VELA_PROC_DB"}
+const (
+	V_PROC_SHM = "VELA-PROC-SHM"
 )
 
 /*
@@ -32,9 +34,37 @@ var (
 
 type ProcEx struct {
 	pid   int32
-	sigar *gosigar.ProcState
 	ps    *process.Process
 	value *Process
+}
+
+type ProcTree struct {
+	Pids []int32
+	Tree []string
+}
+
+func (pt *ProcTree) Text() string {
+	n := len(pt.Tree)
+	if n == 0 {
+		return ""
+	}
+
+	var buf bytes.Buffer
+	for i := n - 1; i >= 0; i-- {
+		buf.WriteString(strutil.String(pt.Pids[i]))
+		buf.WriteString(".")
+		buf.WriteString(pt.Tree[i])
+		if i != 0 {
+			buf.WriteString(">")
+		}
+	}
+
+	return buf.String()
+}
+
+func (pt *ProcTree) Add(pid int32, name string) {
+	pt.Pids = append(pt.Pids, pid)
+	pt.Tree = append(pt.Tree, name)
 }
 
 type snapshot struct {
@@ -49,7 +79,6 @@ type snapshot struct {
 	ignore   *cond.Ignore
 	tomb     *tomb.Tomb
 	limit    ratelimit.Limiter
-	bkt      []string
 	factory  map[int32]*ProcEx
 	update   map[int32]*ProcEx
 	current  map[int32]bool
@@ -65,7 +94,6 @@ func newSnapshot(L *lua.LState) *snapshot {
 	snt := &snapshot{
 		state:    0, //init
 		enable:   L.IsTrue(1),
-		bkt:      []string{"VELA_PROC_DB"},
 		co:       xEnv.Clone(L),
 		vsh:      vswitch.NewL(L),
 		onCreate: pipe.New(pipe.Env(xEnv)),
@@ -147,42 +175,43 @@ func (sa *snapshot) wait() {
 }
 
 func (sa *snapshot) simple(pid int32) (*ProcEx, error) {
-	sigar := &gosigar.ProcState{}
-	err := sigar.Get(int(pid))
-	//ps, err := process.NewProcess(pid)
-	if err != nil {
-		return nil, err
-	}
-
 	ps, err := process.NewProcess(pid)
-	if err != nil {
+	if ps == nil {
 		return nil, err
 	}
 
-	ppid := int32(sigar.Ppid)
-
-	pv := &Process{
-		Pid:      pid,
-		Name:     sigar.Name,
-		Username: sigar.Username,
-		State:    state(string(sigar.State)),
-		Ppid:     ppid,
+	pv := &Process{Pid: pid}
+	if name, e := ps.Name(); e == nil {
+		pv.Name = name
+	} else {
+		return nil, e
 	}
 
-	if uptime, e := ps.CreateTime(); e == nil {
+	if user, _ := ps.Username(); len(user) > 0 {
+		pv.Username = user
+	}
+
+	if ppid, _ := ps.Ppid(); ppid > 0 {
+		pv.Ppid = ppid
+	}
+
+	if stat, _ := ps.Status(); len(stat) > 0 {
+		pv.State = strings.Join(stat, "|")
+	}
+
+	if uptime, _ := ps.CreateTime(); uptime > 0 {
 		pv.Uptime = uptime
 	}
 
 	pex := &ProcEx{
 		pid:   pid,
-		sigar: sigar,
 		ps:    ps,
 		value: pv,
 	}
 
 	sa.Factory(pid, pex)
 
-	if name, ok := sa.system[ppid]; ok {
+	if name, ok := sa.system[pex.value.Ppid]; ok {
 		return nil, fmt.Errorf("ignore system %s process children", name)
 	}
 
@@ -215,6 +244,7 @@ func (sa *snapshot) equal(s *Process, old *Process) bool {
 }
 
 func (sa *snapshot) diff(key string, v interface{}) {
+
 	sa.wait()
 
 	pid, err := auxlib.ToInt32E(key)
@@ -241,7 +271,6 @@ func (sa *snapshot) diff(key string, v interface{}) {
 	delete(sa.current, pid)
 	pex, er := sa.simple(pid)
 	if er != nil {
-		//xEnv.Infof("not found pid:%d process %v", pid, er)
 		sa.delete[key] = v
 		sa.report.OnDelete(old)
 		return
@@ -289,12 +318,11 @@ func (sa *snapshot) detect() {
 		return
 	}
 
-	bkt := xEnv.Bucket(sa.bkt...)
+	bkt := xEnv.Shm(V_PROC_SHM)
 	bkt.Range(sa.diff)
 	sa.Create(bkt) //不相等 和 不需要升级 的进程服务
-	sa.Delete(bkt)
 	sa.Update(bkt)
-	sa.doReport()
+	sa.doReport(bkt)
+	sa.Delete(bkt)
 	sa.reset()
-
 }

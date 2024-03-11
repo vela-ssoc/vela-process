@@ -2,7 +2,7 @@ package process
 
 import (
 	"github.com/elastic/gosigar"
-	"github.com/shirou/gopsutil/process"
+	"github.com/shirou/gopsutil/v3/process"
 	"github.com/vela-ssoc/vela-kit/fileutil"
 	"strings"
 	"time"
