@@ -223,7 +223,6 @@ func LookupWithBucket(pid int32) *Process {
 	if err != nil {
 		xEnv.Errorf("not found with bucket %s", key)
 		//todo
-
 		proc, _ := Lookup(pid, NewOption())
 		return proc
 	}
@@ -233,6 +232,10 @@ func LookupWithBucket(pid int32) *Process {
 		return proc
 	}
 
-	proc, _ = Lookup(pid, NewOption())
+	proc, err = Lookup(pid, NewOption())
+	if err != nil {
+		xEnv.Errorf("not found with bucket %s", key)
+	}
+
 	return proc
 }
